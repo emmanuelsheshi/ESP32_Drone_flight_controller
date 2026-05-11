@@ -3,7 +3,9 @@
 ![Photo 1](photo.jpg)
 ![Photo 2](photo2.jpg)
 
-> 🎬 **Flight video:** [video.mp4](video.mp4)
+
+> 🎬 **Flight video:** [Watch on Google Drive](https://drive.google.com/file/d/1vH2mI2h-nlh5-8pSedQAtvSlQ2322_l2/view?usp=drive_link)
+
 
 ---
 
