@@ -240,9 +240,6 @@ volatile float MotorInput1, MotorInput2, MotorInput3, MotorInput4;
 // Arm:   CH5 > 1500  AND  throttle < 1050 (safety: arm only at low throttle)
 // Disarm: CH5 < 1500  (instant, at any throttle)
 bool isArmed = false;
-bool  autoTakeoffActive        = false;   // true while climbing to auto-takeoff target
-const float AUTO_TAKEOFF_ALT_M = 1.00f;  // auto-takeoff target altitude (metres)
-
 // ── Best available altitude for alt-hold activation capture (metres) ──
 static inline float currentAltHoldAltM() {
   if (ofDistValid && ofRefDistanceCm > 0.0f) return ofRelAltCm / 100.0f;
@@ -497,7 +494,7 @@ void pid_equation(float Error, float P, float I, float D, float PrevError, float
 
 // ═══════════════════════════════════════════════════════════
 // ALTITUDE HOLD - set to 1 to enable, 0 to disable
-// Altitude hold: CH6 (ReceiverValue[5] > 1500) = normal hold, CH8 (ReceiverValue[7] > 1500) = auto-takeoff to 0.6 m
+// Altitude hold: CH6 (ReceiverValue[5] > 1500) activates hold at current altitude
 // ═══════════════════════════════════════════════════════════
 #define ALT_HOLD_ENABLE 1
 
@@ -561,7 +558,6 @@ void resetAltitudeHold()
   altHoldRatePrevError    = 0.0f;
   altHoldAccelIntegrator  = 0.0f;
   altHoldAccelPrevError   = 0.0f;
-  autoTakeoffActive       = false;
 }
 
 void setAltitudeHoldState(uint8_t newState)
@@ -577,17 +573,9 @@ void setAltitudeHoldState(uint8_t newState)
   } else {
     altitudeHoldEnabled = true;
     float curAlt = currentAltHoldAltM();
-    if (ReceiverValue[7] > 1500) {
-      // CH8 high — auto-takeoff to 0.6 m
-      autoTakeoffActive        = true;
-      altitudeHoldTargetM      = AUTO_TAKEOFF_ALT_M;
-      altitudeHoldBaseThrottle = 1500.0f;  // mid-range feed-forward; PI adjusts from here
-    } else {
-      // CH6 high — normal altitude hold at current altitude
-      autoTakeoffActive        = false;
-      altitudeHoldTargetM      = curAlt;
-      altitudeHoldBaseThrottle = constrain(ReceiverValue[2], 1250, 1700);
-    }
+    // Normal altitude hold at current altitude
+    altitudeHoldTargetM      = curAlt;
+    altitudeHoldBaseThrottle = constrain(ReceiverValue[2], 1250, 1700);
     altitudeHoldIntegrator = 0.0f;
     altitudeHoldPrevErrorM = 0.0f;
     altitudeHoldThrottleCorrection = 0.0f;
@@ -649,11 +637,7 @@ void updateAltitudeHold(float dt, uint32_t nowMs)
   }
 
   // Wait in READY until pilot throttle is above spool zone.
-  // Bypassed when CH8 is high (auto-takeoff requested) — autoTakeoffActive hasn't been
-  // set yet at this point (it is set inside setAltitudeHoldState), so we must also check
-  // the CH8 switch directly to avoid blocking the initial activation with low throttle.
-  bool ch8On = ReceiverValue[7] > 1500;
-  if (!autoTakeoffActive && !ch8On && ReceiverValue[2] < 1200) {
+  if (ReceiverValue[2] < 1200) {
     setAltitudeHoldState(ALT_HOLD_STATE_READY);
     return;
   }
@@ -695,33 +679,17 @@ void updateAltitudeHold(float dt, uint32_t nowMs)
                     : dt;
     lastAltHoldUpdateMs = nowMs;
 
-    // Auto-takeoff completion: within 2 cm of target → switch to normal hold.
-    // Integrator is NOT clamped here — keeping the accumulated value prevents
-    // the sudden throttle drop that caused the drone to stall short of 1 m.
-    if (autoTakeoffActive && currentAltM >= (AUTO_TAKEOFF_ALT_M - 0.02f)) {
-      autoTakeoffActive   = false;
-      altitudeHoldTargetM = AUTO_TAKEOFF_ALT_M;
-    }
-
     // Stick override: nudges altitude target with large throttle deflection.
-    // Disabled during auto-takeoff to prevent accidental target shift.
-    if (!autoTakeoffActive) {
-      float stickOffset = ReceiverValue[2] - altitudeHoldBaseThrottle;
-      if (fabsf(stickOffset) > 35.0f) {
-        altitudeHoldTargetM += stickOffset * 0.0012f * altDt;
-      }
+    float stickOffset = ReceiverValue[2] - altitudeHoldBaseThrottle;
+    if (fabsf(stickOffset) > 35.0f) {
+      altitudeHoldTargetM += stickOffset * 0.0012f * altDt;
     }
 
     // ── OUTER P LOOP: altitude error (cm) → desired climb rate (cm/s) ──
     // P_ALT lowered to 0.6 (was 1.0) — reduces ~1 s oscillation from over-driving
     const float P_ALT = 0.6f;
     float altErrorCm = (altitudeHoldTargetM - currentAltM) * 100.0f;
-    // Gentler climb-rate cap during takeoff avoids a violent launch.
-    // Cap is relaxed to 40 cm/s in the final 20 cm so the drone can actually reach target.
-    float distToTarget = (altitudeHoldTargetM - currentAltM) * 100.0f;  // cm
-    float climbRateCap = autoTakeoffActive
-                           ? (distToTarget < 20.0f ? 40.0f : 25.0f)
-                           : 200.0f;
+    const float climbRateCap = 200.0f;
     altHoldDesiredClimbRate = constrain(P_ALT * altErrorCm, -climbRateCap, climbRateCap);
 
     // ── MID RATE PI LOOP: rate error (cm/s) → throttle correction (PWM) ──
@@ -747,10 +715,6 @@ void updateAltitudeHold(float dt, uint32_t nowMs)
   }
 
   InputThrottle = altitudeHoldBaseThrottle + altitudeHoldThrottleCorrection;
-  // Throttle floor during auto-takeoff guarantees enough thrust to leave the ground
-  if (autoTakeoffActive) {
-    if (InputThrottle < 1380.0f) InputThrottle = 1380.0f;
-  }
 }
 
 // ═══════════════════════════════════════════════════════════
