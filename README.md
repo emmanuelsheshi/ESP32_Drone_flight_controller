@@ -54,6 +54,100 @@ BMP280 initialised at 100 kHz; bus returned to 400 kHz for MPU6050.
 
 ---
 
+## Circuit / Wiring
+
+### Full Wiring Table
+
+| ESP32 GPIO | Connected To | Wire | Notes |
+|---|---|---|---|
+| **3V3** | MPU6050 VCC | Red | 3.3 V power |
+| **3V3** | BMP280 VCC | Red | 3.3 V power |
+| **3V3** | MTF-02P VCC | Red | Check sensor datasheet — some need 5 V |
+| **GND** | MPU6050 GND | Black | Common ground |
+| **GND** | BMP280 GND | Black | |
+| **GND** | MTF-02P GND | Black | |
+| **GND** | All ESC signal GND | Black | Signal ground reference |
+| **GND** | LED cathode (−) | Black | Via 330 Ω resistor |
+| **GPIO 21** | MPU6050 SDA | Yellow | I²C data |
+| **GPIO 21** | BMP280 SDA | Yellow | Same I²C bus |
+| **GPIO 22** | MPU6050 SCL | Green | I²C clock |
+| **GPIO 22** | BMP280 SCL | Green | Same I²C bus |
+| **GPIO 3 (RX0)** | MTF-02P TX | Blue | MAVLink @ 115200 baud |
+| **GPIO 16 (RX2)** | CRSF RX → ESP TX pin | Orange | UART2, ExpressLRS receiver |
+| **GPIO 17 (TX2)** | CRSF TX → ESP RX pin | White | UART2, ExpressLRS receiver |
+| **GPIO 25** | ESC M3 (BL, Rear-Left) signal | — | DShot300, CCW motor |
+| **GPIO 26** | ESC M4 (FL, Front-Left) signal | — | DShot300, CW motor |
+| **GPIO 32** | ESC M2 (BR, Rear-Right) signal | — | DShot300, CW motor |
+| **GPIO 33** | ESC M1 (FR, Front-Right) signal | — | DShot300, CCW motor |
+| **GPIO 15** | LED anode (+) | — | Via 330 Ω resistor to GND |
+
+> ⚠️ ESCs are powered from the main LiPo via a PDB or BEC — **not** from the ESP32.  
+> ⚠️ If your CRSF receiver runs on 5 V, use its own BEC output; do not power it from ESP32 3V3.
+
+---
+
+### Block Diagram
+
+```
+                         ┌─────────────────────────────────────┐
+                         │          ESP32 WROOM-32              │
+                         │                                      │
+  ┌──────────┐  SDA(21)  │ GPIO21 ◄──────────────────┐         │
+  │ MPU6050  │──────────►│ GPIO22 ◄──────────────────┤         │
+  │  (0x68)  │  SCL(22)  │                            │         │
+  └──────────┘           │                     I²C bus│         │
+  ┌──────────┐  SDA(21)  │                            │         │
+  │  BMP280  │──────────►│ GPIO21─────────────────────┘         │
+  │  (0x76)  │  SCL(22)  │ GPIO22                               │
+  └──────────┘           │                                      │
+                         │                                      │
+  ┌──────────┐  TX→RX    │                                      │
+  │ MTF-02P  │──────────►│ GPIO3 (RX0)   UART0 @ 115200        │
+  │ Opt+LiDAR│           │                MAVLink               │
+  └──────────┘           │                                      │
+                         │                                      │
+  ┌──────────┐  TX→RX    │                                      │
+  │  ELRS RX │──────────►│ GPIO16 (RX2)  UART2 @ 921600        │
+  │  (CRSF)  │◄──────────│ GPIO17 (TX2)  CRSF                   │
+  └──────────┘  RX←TX    │                                      │
+                         │                                      │
+                         │ GPIO25 ──────────────────────────────┼──► ESC M3 BL (CCW)
+                         │ GPIO26 ──────────────────────────────┼──► ESC M4 FL (CW)
+                         │ GPIO32 ──────────────────────────────┼──► ESC M2 BR (CW)
+                         │ GPIO33 ──────────────────────────────┼──► ESC M1 FR (CCW)
+                         │                                      │
+                         │ GPIO15 ──[330Ω]── LED ── GND        │
+                         └─────────────────────────────────────┘
+
+  LiPo ──► PDB/BEC ──► ESC ×4 (motor power)
+                   └──► 5V BEC ──► ELRS RX / MTF-02P (if 5V required)
+                   └──► 3V3 reg ──► ESP32 VIN
+```
+
+---
+
+### Motor Diagram (Top-Down View)
+
+```
+          FRONT (nose)
+
+   FL  [M4]        [M1]  FR
+  GPIO26 (CW)    GPIO33 (CCW)
+       \              /
+        \            /
+         [  ESP32  ]
+        /            \
+       /              \
+  GPIO25 (CCW)   GPIO32 (CW)
+   BL  [M3]        [M2]  BR
+
+          REAR
+```
+
+> Prop directions: CW props on M2/M4, CCW props on M1/M3. Match this to your ESC/motor rotation or the drone will flip on takeoff.
+
+---
+
 ## Transmitter — BetaFPV LiteRadio 3 / 3 Pro
 
 ```
